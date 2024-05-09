@@ -1,0 +1,66 @@
+pipeline {
+    agent any
+    tools{
+        jdk 'Jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        SCANNER_HOME=tool 'sonar-scanner'
+      }
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/BhargavKarkare/Tetris-V1.git'
+            }
+        }
+        stage('Sonar analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=TetrisV1 \
+                    -Dsonar.projectKey=TetrisV1 '''
+                }
+            }
+        }
+        stage('Quality gate') {
+            steps {
+                script{
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-Token'
+                }
+            }
+        }
+        stage('NPM') {
+            steps {
+               sh 'npm install'
+            }
+        }
+        stage('Trivy FS') {
+            steps {
+                sh 'trivy fs . > trivyfs.txt'
+            }
+        }
+        stage('OWASP FS SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('Docker build') {
+            steps {
+               script{
+                   withDockerRegistry(credentialsId: 'docker', toolName: 'Docker') {
+                    sh '''
+                    docker build -t tetrisv1 .
+                    docker tag tetrisv1 bhargavkarkare/tetrisv1:latest
+                    docker push bhargavkarkare/tetrisv1:latest
+                    '''
+                   }
+               }
+            }
+        }
+          stage('Trivy Image') {
+            steps {
+                sh 'trivy image bhargavkarkare/tetrisv1:latest > trivyimage.txt'
+            }
+        }
+    }
+}
